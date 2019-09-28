@@ -22,15 +22,19 @@ package org.smslib.modem.athandler;
 
 import java.io.IOException;
 import java.lang.reflect.Constructor;
-import org.smslib.GatewayException;
-import org.smslib.TimeoutException;
+
 import org.smslib.AGateway.AsyncEvents;
+import org.smslib.GatewayException;
 import org.smslib.InboundMessage.MessageClasses;
+import org.smslib.OutboundTTSMessage;
+import org.smslib.TimeoutException;
 import org.smslib.modem.CNMIDetector;
 import org.smslib.modem.ModemGateway;
 
 public abstract class AATHandler
 {
+	private String CALL_AT_ORDER = null;
+	
 	private ModemGateway gateway;
 
 	private String storageLocations;
@@ -136,6 +140,8 @@ public abstract class AATHandler
 	public abstract void keepLinkOpen() throws TimeoutException, GatewayException, IOException, InterruptedException;
 
 	public abstract int sendMessage(int size, String pdu, String phone, String text) throws TimeoutException, GatewayException, IOException, InterruptedException;
+	
+	public abstract OutboundTTSMessage.CallStatuses textToSpeech(String phone, String text) throws TimeoutException, GatewayException, IOException, InterruptedException;
 
 	public abstract String listMessages(MessageClasses messageClass) throws TimeoutException, GatewayException, IOException, InterruptedException;
 
@@ -263,5 +269,20 @@ public abstract class AATHandler
 	public boolean matchesTerminator(String response)
 	{
 		return findMatchingTerminator(response) >= 0;
+	}
+	
+	void setCallATOrder() throws IOException, InterruptedException, GatewayException, TimeoutException {
+		if (CALL_AT_ORDER == null) {
+			String imsi = getImsi();
+			if (imsi.startsWith("46003") || imsi.startsWith("46005") || imsi.startsWith("46011")) {
+				CALL_AT_ORDER = "AT+CDV";
+			} else {
+				CALL_AT_ORDER = "ATD";
+			}
+		}
+	}
+	
+	String getCallAtOrder(String phone) {
+		return String.format("%s%s;\r", CALL_AT_ORDER, phone);
 	}
 }

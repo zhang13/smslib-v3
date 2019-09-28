@@ -26,6 +26,7 @@ import java.util.Collection;
 import java.util.Date;
 import java.util.LinkedList;
 import java.util.List;
+
 import org.smslib.AGateway.GatewayStatuses;
 import org.smslib.InboundMessage.MessageClasses;
 import org.smslib.OutboundMessage.FailureCauses;
@@ -1605,7 +1606,18 @@ public class Service
 			}
 		}
 	}
-
+	
+	public OutboundTTSMessage.CallStatuses textToSpeech(OutboundTTSMessage msg) throws TimeoutException, GatewayException, IOException, InterruptedException
+	{
+		if (getServiceStatus() != ServiceStatus.STARTED)
+			return OutboundTTSMessage.CallStatuses.ERROR;
+		AGateway gateway = routeMessage(msg);
+		if (gateway != null) {
+			return gateway.textToSpeech(msg);
+		}
+		return OutboundTTSMessage.CallStatuses.ERROR;
+	}
+	
 	public static void main(String[] args)
 	{
 		System.out.println(Library.getLibraryDescription());

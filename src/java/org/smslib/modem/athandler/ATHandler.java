@@ -21,15 +21,19 @@
 package org.smslib.modem.athandler;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.StringTokenizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import org.smslib.GatewayException;
-import org.smslib.Service;
-import org.smslib.TimeoutException;
+
 import org.smslib.AGateway.AsyncEvents;
 import org.smslib.AGateway.Protocols;
+import org.smslib.GatewayException;
 import org.smslib.InboundMessage.MessageClasses;
+import org.smslib.OutboundTTSMessage;
+import org.smslib.Service;
+import org.smslib.TimeoutException;
 import org.smslib.helper.Logger;
 import org.smslib.modem.AModemDriver;
 import org.smslib.modem.CNMIDetector;
@@ -40,6 +44,10 @@ import org.smslib.modem.ModemGateway;
  */
 public class ATHandler extends AATHandler
 {
+	/**
+	 * 建议200个字切割
+	 */
+	private int pageSize = 200;
 	protected AModemDriver modemDriver;
 
 	protected CNMIDetector cnmiDetector;
@@ -61,21 +69,27 @@ public class ATHandler extends AATHandler
 		super(myGateway);
 		this.modemDriver = myGateway.getModemDriver();
 		this.cnmiDetector = null;
-		this.terminators = new String[14];
+		this.terminators = new String[17];
 		this.terminators[0] = "OK\\s";
 		this.terminators[1] = "\\s*[\\p{ASCII}]*\\s+OK\\s";
-		this.terminators[2] = "(ERROR|NO CARRIER|NO DIALTONE)\\s";
+		this.terminators[2] = "(ERROR|NO CARRIER|NO DIALTONE)(\\s|\\s\\s)";
 		this.terminators[3] = "ERROR:\\s*\\d+\\s";
 		this.terminators[4] = "\\+CM[ES]\\s+ERROR:\\s*\\d+\\s";
 		this.terminators[5] = "\\+CPIN:\\s*READY\\s";
 		this.terminators[6] = "\\+CPIN:\\s*SIM\\s*BUSY\\s";
 		this.terminators[7] = "\\+CPIN:\\s*SIM\\s*PIN\\s";
 		this.terminators[8] = "\\+CPIN:\\s*SIM\\s*PIN2\\s";
-		this.terminators[9] = "\\+CUSD:\\s.*\\s";
-		this.terminators[10] = "\\+CMTI:\\s*\\p{Punct}[\\p{ASCII}]+\\p{Punct}\\p{Punct}\\s*\\d+\\s";
-		this.terminators[11] = "\\+CDSI:\\s*\\p{Punct}[\\p{ASCII}]+\\p{Punct}\\p{Punct}\\s*\\d+\\s";
-		this.terminators[12] = "RING\\s";
-		this.terminators[13] = "\\+CLIP:\\s*\\p{Punct}[\\p{ASCII}]*\\p{Punct}\\p{Punct}\\s*\\d+[\\p{ASCII}]*\\s";
+		
+		this.terminators[9] = "RINGBACK\\s";
+		this.terminators[10] = "CONNECT\\s";
+		this.terminators[11] = "\\+ZTTS: 0(\\s|\\s\\s)";
+		// terminators.length - 5 以上的都是结束标志指令
+		this.terminators[12] = "\\+CUSD:\\s.*\\s";
+		this.terminators[13] = "\\+CMTI:\\s*\\p{Punct}[\\p{ASCII}]+\\p{Punct}\\p{Punct}\\s*\\d+\\s";
+		this.terminators[14] = "\\+CDSI:\\s*\\p{Punct}[\\p{ASCII}]+\\p{Punct}\\p{Punct}\\s*\\d+\\s";
+		this.terminators[15] = "RING\\s";
+		this.terminators[16] = "\\+CLIP:\\s*\\p{Punct}[\\p{ASCII}]*\\p{Punct}\\p{Punct}\\s*\\d+[\\p{ASCII}]*\\s";
+		
 		this.unsolicitedResponses = new String[5];
 		this.unsolicitedResponses[0] = "+CMTI";
 		this.unsolicitedResponses[1] = "+CDSI";
@@ -299,6 +313,119 @@ public class ATHandler extends AATHandler
 		}
 	}
 
+	@Override
+	public OutboundTTSMessage.CallStatuses textToSpeech(String phone, String text) throws TimeoutException, GatewayException, IOException,
+			InterruptedException {
+		setCallATOrder();
+		OutboundTTSMessage.CallStatuses resultStatus = OutboundTTSMessage.CallStatuses.ERROR;
+		getModemDriver().clearBuffer();
+		getModemDriver().write(getCallAtOrder(phone));
+		String response = getModemDriver().getResponse();
+		if (response.indexOf("OK\r") >= 0) {
+			try {
+				response = getModemDriver().getResponse();
+			} catch (TimeoutException e) {
+				return OutboundTTSMessage.CallStatuses.NO_SINGAL;
+			}
+			if (response.indexOf("RINGBACK\r") >= 0) {
+				Logger.getInstance().logInfo(String.format("%s响铃,等待接听...", phone), null, getGateway().getGatewayId());
+				int responseRetries = 0;
+				while (!getModemDriver().dataAvailable())
+				{
+					responseRetries++;
+					if (responseRetries == Service.getInstance().getSettings().OUTBOUND_RETRIES) {
+						return OutboundTTSMessage.CallStatuses.NO_ANSWER;
+					}
+					Thread.sleep(Service.getInstance().getSettings().OUTBOUND_RETRY_WAIT);
+				}
+				try {
+					response = getModemDriver().getResponse();
+				} catch (TimeoutException e) {
+					return OutboundTTSMessage.CallStatuses.NO_ANSWER;
+				}
+				if (response.indexOf("CONNECT\r") >= 0) {
+					Thread.sleep(Service.getInstance().getSettings().AT_WAIT);
+					List<String> textList = splitText(text);
+					Logger.getInstance().logInfo(String.format("%s已经接听,共%d段语音......", phone, textList.size()), null, getGateway().getGatewayId());
+					boolean isLast = false;
+					for (int i = 0; i < textList.size(); i++) {
+						isLast = i == textList.size() - 1;
+						resultStatus = speachPartText(phone, textList.get(i), (i + 1), isLast);
+						if (isLast || resultStatus != OutboundTTSMessage.CallStatuses.OK) {
+							return resultStatus;
+						}
+					}
+				}else if (response.indexOf("NO CARRIER") >= 0) {
+					resultStatus = OutboundTTSMessage.CallStatuses.HANG_UP;
+					Logger.getInstance().logInfo(String.format("%s挂断...", phone), null, getGateway().getGatewayId());
+				}
+			}
+		}
+		return resultStatus;
+	}
+
+	protected OutboundTTSMessage.CallStatuses speachPartText(String phone, String text, int index, boolean isLastText) throws IOException, GatewayException, TimeoutException,
+			InterruptedException {
+		OutboundTTSMessage.CallStatuses resultStatus = OutboundTTSMessage.CallStatuses.ERROR;
+		getModemDriver().write(String.format("AT+ZTTS=A,\"%s\"\r", getUnicodeText(text)));
+		String response = getModemDriver().getResponse();
+		if (response.indexOf("OK\r") >= 0) {
+			Logger.getInstance().logInfo(String.format("%s播放语音段落%d...", phone, index), null, getGateway().getGatewayId());
+			int defaultSerialTimeOut = Service.getInstance().getSettings().SERIAL_TIMEOUT;
+			try {
+				Service.getInstance().getSettings().SERIAL_TIMEOUT = 30 * 1000;
+				response = getModemDriver().getResponse();
+				if (response.indexOf("+ZTTS:") >= 0) {
+					resultStatus = OutboundTTSMessage.CallStatuses.OK;
+					if (isLastText) {
+						getModemDriver().write("AT+CHUP\r"); // 挂断
+						Logger.getInstance().logInfo(String.format("%s语音播放结束!", phone), null, getGateway().getGatewayId());
+					}
+				} else if (response.indexOf("NO CARRIER") >= 0) {
+					resultStatus = OutboundTTSMessage.CallStatuses.ANSWER_HANG_UP;
+					Logger.getInstance().logInfo(String.format("%s挂断...", phone), null, getGateway().getGatewayId());
+				}
+			} catch (TimeoutException e) {
+				resultStatus = OutboundTTSMessage.CallStatuses.TIME_OUT;
+				Logger.getInstance().logInfo(String.format("%s等待播放段落%d反馈超时...", phone, index), null, getGateway().getGatewayId());
+			} finally {
+				Service.getInstance().getSettings().SERIAL_TIMEOUT = defaultSerialTimeOut;
+			}
+		}
+		return resultStatus;
+	}
+
+	/**
+	 * 语音播报字符切分，一段最大是512个字，建议200个字切割
+	 */
+	private List<String> splitText(String text) {
+		double page = Math.ceil(text.length() * 1d / pageSize);
+		List<String> textSplit = new ArrayList<String>();
+		for (int i = 0; i < page; i++) {
+			if (i == page - 1) {
+				textSplit.add(text.substring(i * pageSize, text.length()));
+			} else {
+				textSplit.add(text.substring(i * pageSize, (i + 1) * pageSize));
+			}
+		}
+		return textSplit;
+	}
+	
+	private String getUnicodeText(String text) {
+		StringBuffer sb = new StringBuffer();
+		char[] c = text.toCharArray();
+		for (int i = 0; i < c.length; i++) {
+			String hexStr = Integer.toHexString(c[i]);
+			if (hexStr.length() == 2) {
+				hexStr = "00" + hexStr;
+			} else {
+				hexStr = hexStr.substring(2) + hexStr.substring(0, 2);
+			}
+			sb.append(hexStr);
+		}
+		return sb.toString();
+	}
+	
 	@Override
 	public int sendMessage(int size, String pdu, String phone, String text) throws TimeoutException, GatewayException, IOException, InterruptedException
 	{

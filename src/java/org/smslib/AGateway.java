@@ -22,6 +22,7 @@ package org.smslib;
 
 import java.io.IOException;
 import java.util.Collection;
+
 import org.smslib.InboundMessage.MessageClasses;
 import org.smslib.OutboundMessage.FailureCauses;
 import org.smslib.OutboundMessage.MessageStatuses;
@@ -326,6 +327,12 @@ public abstract class AGateway
 	{
 		throw new GatewayException("Feature not supported.");
 	}
+	
+	public OutboundTTSMessage.CallStatuses textToSpeech(OutboundTTSMessage msg) throws TimeoutException, GatewayException, IOException, InterruptedException
+	{
+		throw new GatewayException("Feature not supported.");
+	}
+
 
 	public int sendMessages(Collection<OutboundMessage> msgList) throws TimeoutException, GatewayException, IOException, InterruptedException
 	{
@@ -550,6 +557,11 @@ public abstract class AGateway
 	 */
 	public abstract int getQueueSchedulingInterval();
 
+	public String sendCustomATCommand(String customCommand) throws GatewayException, TimeoutException, IOException, InterruptedException
+	{
+		throw new GatewayException("Feature not supported");
+	}
+	
 	public String sendUSSDCommand(String ussdCommand) throws GatewayException, TimeoutException, IOException, InterruptedException
 	{
 		throw new GatewayException("Feature not supported");

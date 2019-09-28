@@ -33,6 +33,7 @@ import java.util.Random;
 import java.util.StringTokenizer;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+
 import org.ajwcc.pduUtils.gsm3040.Pdu;
 import org.ajwcc.pduUtils.gsm3040.PduParser;
 import org.ajwcc.pduUtils.gsm3040.PduUtils;
@@ -44,16 +45,18 @@ import org.smslib.GatewayException;
 import org.smslib.InboundBinaryMessage;
 import org.smslib.InboundEncryptedMessage;
 import org.smslib.InboundMessage;
+import org.smslib.OutboundTTSMessage;
+import org.smslib.InboundMessage.MessageClasses;
 import org.smslib.OutboundMessage;
+import org.smslib.OutboundMessage.FailureCauses;
+import org.smslib.OutboundMessage.MessageStatuses;
+import org.smslib.OutboundTTSMessage.CallStatuses;
 import org.smslib.Phonebook;
 import org.smslib.Service;
 import org.smslib.StatusReportMessage;
 import org.smslib.TimeoutException;
 import org.smslib.USSDRequest;
 import org.smslib.UnknownMessage;
-import org.smslib.InboundMessage.MessageClasses;
-import org.smslib.OutboundMessage.FailureCauses;
-import org.smslib.OutboundMessage.MessageStatuses;
 import org.smslib.helper.Logger;
 import org.smslib.modem.athandler.AATHandler;
 
@@ -249,7 +252,25 @@ public class ModemGateway extends AGateway
 			else return false;
 		}
 	}
-
+	
+	@Override
+	public OutboundTTSMessage.CallStatuses textToSpeech(OutboundTTSMessage msg) throws TimeoutException, GatewayException, IOException, InterruptedException
+	{
+		boolean sendKeepLinkOpen = false;
+		if (getStatus() != GatewayStatuses.STARTED) return CallStatuses.ERROR;
+		if (getLastKeepLinkOpen() == -1) sendKeepLinkOpen = true;
+		if (!sendKeepLinkOpen)
+		{
+			if ((System.currentTimeMillis() - getLastKeepLinkOpen()) > 4000) sendKeepLinkOpen = true;
+		}
+		synchronized (getDriver().getSYNCCommander())
+		{
+			if (sendKeepLinkOpen) getAtHandler().keepLinkOpen();
+			setLastKeepLinkOpen(System.currentTimeMillis());
+			return getATHandler().textToSpeech(msg.getRecipient(), msg.getText());
+		}
+	}
+	
 	@Override
 	public boolean deleteMessage(InboundMessage msg) throws TimeoutException, GatewayException, IOException, InterruptedException
 	{
@@ -374,6 +395,10 @@ public class ModemGateway extends AGateway
 						memIndex = Integer.parseInt(line.substring(i + 1, j).trim());
 					}
 					catch (NumberFormatException e)
+					{
+						// TODO: What to do here?
+						Logger.getInstance().logWarn("Incorrect Memory Index number parsed!", e, getGatewayId());
+					}catch (IndexOutOfBoundsException e)
 					{
 						// TODO: What to do here?
 						Logger.getInstance().logWarn("Incorrect Memory Index number parsed!", e, getGatewayId());
